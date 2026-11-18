@@ -27,6 +27,7 @@
 #include "ARM_InstrInfo.h"
 #include "JitBlock.h"
 #include "TinyVector.h"
+#include "MICompat.h"
 
 namespace melonDS
 {
@@ -74,11 +75,13 @@ struct FetchedInstr
 };
 
 // size should be 16 bytes because I'm to lazy to use mul and whatnot
-struct __attribute__((packed)) AddressRange
+MI_COMPAT_PACK_BEGIN
+struct MI_COMPAT_PACKED AddressRange
 {
     TinyVector<JitBlock*> Blocks;
     u32 Code;
 };
+MI_COMPAT_PACK_END
 
 
 typedef void (*InterpreterFunc)(ARM* cpu);

@@ -17,7 +17,9 @@
 */
 
 #include <string.h>
+#if !defined(_WIN32)
 #include <dirent.h>
+#endif
 #include <inttypes.h>
 #include <vector>
 

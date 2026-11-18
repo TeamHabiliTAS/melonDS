@@ -137,11 +137,11 @@ bool ARCodeFile::Load()
             isincat = true;
 
             ARCodeCat cat = {
-                .Parent = &RootCat,
-                .Name = catname,
-                .Description = "",
-                .OnlyOneCodeEnabled = onlyone!=0,
-                .Children = {}
+                &RootCat,
+                catname,
+                "",
+                onlyone!=0,
+                {}
             };
             RootCat.Children.emplace_back(cat);
             curcat = &std::get<ARCodeCat>(RootCat.Children.back());
@@ -172,11 +172,11 @@ bool ARCodeFile::Load()
             isincode = true;
 
             ARCode code = {
-                .Parent = curcat,
-                .Name = codename,
-                .Description = "",
-                .Enabled = enable!=0,
-                .Code = {}
+                curcat,
+                codename,
+                "",
+                enable!=0,
+                {}
             };
             curcat->Children.emplace_back(code);
             curcode = &std::get<ARCode>(curcat->Children.back());
@@ -325,11 +325,11 @@ void ARCodeFile::Import(ARDatabaseEntry& dbentry, ARCodeEnableMap& enablemap, bo
                 continue;
 
             ARCodeCat newcat = {
-                .Parent = &RootCat,
-                .Name = cat.Name,
-                .Description = cat.Description,
-                .OnlyOneCodeEnabled = cat.OnlyOneCodeEnabled,
-                .Children = {}
+                &RootCat,
+                cat.Name,
+                cat.Description,
+                cat.OnlyOneCodeEnabled,
+                {}
             };
             RootCat.Children.emplace_back(newcat);
             ARCodeCat* parentptr = &std::get<ARCodeCat>(RootCat.Children.back());
@@ -341,11 +341,11 @@ void ARCodeFile::Import(ARDatabaseEntry& dbentry, ARCodeEnableMap& enablemap, bo
                     continue;
 
                 ARCode newcode = {
-                    .Parent = parentptr,
-                    .Name = code.Name,
-                    .Description = code.Description,
-                    .Enabled = code.Enabled,
-                    .Code = code.Code
+                    parentptr,
+                    code.Name,
+                    code.Description,
+                    code.Enabled,
+                    code.Code
                 };
                 parentptr->Children.emplace_back(newcode);
             }
@@ -357,11 +357,11 @@ void ARCodeFile::Import(ARDatabaseEntry& dbentry, ARCodeEnableMap& enablemap, bo
                 continue;
 
             ARCode newcode = {
-                .Parent = &RootCat,
-                .Name = code.Name,
-                .Description = code.Description,
-                .Enabled = code.Enabled,
-                .Code = code.Code
+                &RootCat,
+                code.Name,
+                code.Description,
+                code.Enabled,
+                code.Code
             };
             RootCat.Children.emplace_back(newcode);
         }

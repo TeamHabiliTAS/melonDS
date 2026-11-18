@@ -22,6 +22,7 @@
 #include <assert.h>
 #include <string.h>
 #include "types.h"
+#include "MICompat.h"
 
 namespace melonDS
 {
@@ -36,8 +37,9 @@ namespace melonDS
     - probably only works with POD types
     - remove operations don't preserve order, but O(1)!
 */
+MI_COMPAT_PACK_BEGIN
 template<typename T>
-struct __attribute__((packed)) TinyVector
+struct MI_COMPAT_PACKED TinyVector
 {
     T* Data = NULL;
     u16 Capacity = 0;
@@ -132,6 +134,7 @@ struct __attribute__((packed)) TinyVector
         return Data[index];
     }
 };
+MI_COMPAT_PACK_END
 }
 
 #endif //MELONDS_TINYVECTOR_H

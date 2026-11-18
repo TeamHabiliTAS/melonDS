@@ -232,11 +232,11 @@ bool ARDatabaseDAT::LoadCheatCodes(EntryInfo& info, ARDatabaseEntry& entry)
             }
 
             ARCodeCat cat = {
-                    .Parent = &entry.RootCat,
-                    .Name = itemname,
-                    .Description = itemdesc,
-                    .OnlyOneCodeEnabled = !!(itemflags & (1<<24)),
-                    .Children = {}
+                    &entry.RootCat,
+                    itemname,
+                    itemdesc,
+                    !!(itemflags & (1<<24)),
+                    {}
             };
             entry.RootCat.Children.emplace_back(cat);
             curcat = &std::get<ARCodeCat>(entry.RootCat.Children.back());

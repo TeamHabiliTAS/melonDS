@@ -20,6 +20,7 @@
 #define NONSTUPIDBITFIELD_H
 
 #include "types.h"
+#include "MICompat.h"
 
 #include <memory.h>
 
@@ -118,7 +119,7 @@ struct NonStupidBitField
             done:;
             }
 
-            BitIdx = __builtin_ctzll(RemainingBits);
+            BitIdx = MI_COMPAT_CTZ64(RemainingBits);
             RemainingBits &= ~(1ULL << BitIdx);
 
             if ((Size & 0x3F) && BitIdx >= Size)
@@ -175,7 +176,7 @@ struct NonStupidBitField
         {
             if (Data[i])
             {
-                u32 idx = __builtin_ctzll(Data[i]);
+                u32 idx = MI_COMPAT_CTZ64(Data[i]);
                 if (idx + i * 64 < Size)
                     return {*this, i, idx, Data[i] & ~(1ULL << idx)};
             }
@@ -248,7 +249,7 @@ struct NonStupidBitField
         for (int i = 0; i < DataLength; i++)
         {
             if (Data[i])
-                return i * 64 + __builtin_ctzll(Data[i]);
+                return i * 64 + MI_COMPAT_CTZ64(Data[i]);
         }
         return -1;
     }
@@ -258,7 +259,7 @@ struct NonStupidBitField
         for (int i = DataLength - 1; i >= 0; i--)
         {
             if (Data[i])
-                return i * 64 + (63 - __builtin_clzll(Data[i]));
+                return i * 64 + (63 - MI_COMPAT_CLZ64(Data[i]));
         }
         return -1;
     }

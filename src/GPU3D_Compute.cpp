@@ -22,6 +22,7 @@
 #include <algorithm>
 
 #include "Utils.h"
+#include "MICompat.h"
 
 #include "OpenGLSupport.h"
 
@@ -178,7 +179,7 @@ void ComputeRenderer3D::ShaderCompileStep(int& current, int& count)
         CompileShader(ShaderFinalPass[7], ComputeRendererShaders::FinalPass, {"FinalPass", "AntiAliasing", "EdgeMarking", "Fog"});
         return;
     default:
-        __builtin_unreachable();
+        MI_COMPAT_UNREACHABLE();
         return;
     }
 }

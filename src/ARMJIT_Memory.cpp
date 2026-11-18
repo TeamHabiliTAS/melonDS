@@ -35,6 +35,7 @@
 #endif
 
 #include "ARMJIT.h"
+#include "MICompat.h"
 #include "ARMJIT_Memory.h"
 
 #include "ARMJIT_Internal.h"
@@ -124,7 +125,7 @@ void HandleFault(u64 pc, u64 lr, u64 fp, u64 faultAddr, u32 desc);
 extern "C"
 {
 
-void ARM_RestoreContext(u64* registers) __attribute__((noreturn));
+MI_COMPAT_NORETURN void ARM_RestoreContext(u64* registers);
 
 extern char __start__;
 extern char __rodata_start;
@@ -760,7 +761,7 @@ bool ARMJIT_Memory::IsFastMemSupported()
         PageSize = sysconf(_SC_PAGESIZE);
         isSupported = PageSize == RegularPageSize || PageSize == LargePageSize;
 #endif
-        PageShift = __builtin_ctz(PageSize);
+        PageShift = MI_COMPAT_CTZ32(PageSize);
         initialised = true;
     }
     return isSupported;

@@ -1,5 +1,6 @@
 #include "ARMJIT_Global.h"
 #include "ARMJIT_Memory.h"
+#include "MICompat.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -45,7 +46,7 @@ void* AllocateCodeMem()
 #if !defined(__APPLE__) && !defined(__NetBSD__) && !defined(__OpenBSD__)
     if (AvailableCodeMemSlices)
     {
-        int slice = __builtin_ctz(AvailableCodeMemSlices);
+        int slice = MI_COMPAT_CTZ32(AvailableCodeMemSlices);
         AvailableCodeMemSlices &= ~(1 << slice);
         //printf("allocating slice %d\n", slice);
         return &GetAlignedCodeMemoryStart()[slice * CodeMemorySliceSize];

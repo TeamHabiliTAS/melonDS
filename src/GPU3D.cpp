@@ -25,6 +25,7 @@
 #include "GPU3D_Soft.h"
 #include "Platform.h"
 #include "GPU3D.h"
+#include "MICompat.h"
 
 namespace melonDS
 {
@@ -2328,7 +2329,7 @@ void GPU3D::ExecuteCommand() noexcept
                     break;
 
                 default:
-                    __builtin_unreachable();
+                    MI_COMPAT_UNREACHABLE();
                 }
             }
         }
