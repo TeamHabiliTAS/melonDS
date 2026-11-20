@@ -442,6 +442,9 @@ void NDS::Reset()
 
     RunningGame = false;
     LastSysClockCycles = 0;
+    NumFrames = 0;
+    NumLagFrames = 0;
+    LagFrameFlag = false;
 
     // BIOS files are now loaded by the frontend
 
@@ -467,6 +470,12 @@ void NDS::Reset()
     ARM9Timestamp = 0; ARM9Target = 0;
     ARM7Timestamp = 0; ARM7Target = 0;
     SysTimestamp = 0;
+    CurCPU = 0;
+    FrameStartTimestamp = SysTimestamp;
+    FrameEndTimestamp = SysTimestamp + FrameCycles;
+    FrameActive = false;
+    FrameNormalStarted = false;
+    LagFrameFlag = false;
 
     InitTimings();
 
@@ -760,6 +769,13 @@ bool NDS::DoSavestate(Savestate* file)
     {
         GPU.SetPowerCnt(PowerControl9);
 
+        // Reconstruct the transient frame state.  MI saves at frame
+        // boundaries, where TotalScanlines is nonzero.  A mid-frame state
+        // keeps the frame active so RunUntil can continue it.
+        FrameActive = (GPU.TotalScanlines == 0);
+        FrameNormalStarted = FrameActive;
+        FrameEndTimestamp = FrameStartTimestamp + FrameCycles;
+
         SPU.SetPowerCnt(PowerControl7 & 0x0001);
         Wifi.SetPowerCnt(PowerControl7 & 0x0002);
 
@@ -922,142 +938,20 @@ void NDS::RunSystemSleep(u64 timestamp)
     }
 }
 
-template <CPUExecuteMode cpuMode>
-u32 NDS::RunFrame()
+void NDS::BeginFrame()
 {
-    Current = this;
-
     FrameStartTimestamp = SysTimestamp;
-
+    FrameEndTimestamp = SysTimestamp + FrameCycles;
     GPU.TotalScanlines = 0;
-
     LagFrameFlag = true;
-    bool runFrame = Running && !(CPUStop & CPUStop_Sleep);
-    while (Running)
-    {
-        u64 frametarget = SysTimestamp + 560190;
+    FrameActive = true;
+    FrameNormalStarted = false;
+}
 
-        if (CPUStop & CPUStop_Sleep)
-        {
-            // we are running in sleep mode
-            // we still need to run the RTC during this mode
-            // we also keep outputting audio, so that frontends using audio sync don't skyrocket to 1000+FPS
-
-            while (Running && (SysTimestamp < frametarget))
-            {
-                u64 target = NextTargetSleep();
-                if (target > frametarget)
-                    target = frametarget;
-
-                ARM9Timestamp = target << ARM9ClockShift;
-                ARM7Timestamp = target;
-                TimerTimestamp[0] = target;
-                TimerTimestamp[1] = target;
-                GPU.GPU3D.Timestamp = target;
-                RunSystemSleep(target);
-
-                if (!(CPUStop & CPUStop_Sleep))
-                    break;
-            }
-
-            if (SysTimestamp >= frametarget)
-                GPU.BlankFrame();
-        }
-        else
-        {
-            if (cpuMode == CPUExecuteMode::InterpreterGDB)
-            {
-                ARM9.CheckGdbIncoming();
-                ARM7.CheckGdbIncoming();
-            }
-
-            if (!(CPUStop & CPUStop_Wakeup))
-            {
-                GPU.StartFrame();
-            }
-            CPUStop &= ~CPUStop_Wakeup;
-
-            while (Running && GPU.TotalScanlines==0)
-            {
-                u64 target = NextTarget();
-                ARM9Target = target << ARM9ClockShift;
-                CurCPU = 0;
-
-                if (CPUStop & CPUStop_GXStall)
-                {
-                    // GXFIFO stall
-                    s32 cycles = GPU.GPU3D.CyclesToRunFor();
-
-                    ARM9Timestamp = std::min(ARM9Target, ARM9Timestamp+(cycles<<ARM9ClockShift));
-                }
-                else if (CPUStop & CPUStop_DMA9)
-                {
-                    DMAs[0].Run();
-                    if (!(CPUStop & CPUStop_GXStall)) DMAs[1].Run();
-                    if (!(CPUStop & CPUStop_GXStall)) DMAs[2].Run();
-                    if (!(CPUStop & CPUStop_GXStall)) DMAs[3].Run();
-                    if (ConsoleType == 1)
-                    {
-                        auto& dsi = dynamic_cast<melonDS::DSi&>(*this);
-                        dsi.RunNDMAs(0);
-                    }
-                }
-                else
-                {
-                    ARM9.Execute<cpuMode>();
-                }
-
-                RunTimers(0);
-                GPU.GPU3D.Run();
-
-                target = ARM9Timestamp >> ARM9ClockShift;
-                CurCPU = 1;
-
-                while (ARM7Timestamp < target)
-                {
-                    ARM7Target = target; // might be changed by a reschedule
-
-                    if (CPUStop & CPUStop_DMA7)
-                    {
-                        DMAs[4].Run();
-                        DMAs[5].Run();
-                        DMAs[6].Run();
-                        DMAs[7].Run();
-                        if (ConsoleType == 1)
-                        {
-                            auto& dsi = dynamic_cast<melonDS::DSi&>(*this);
-                            dsi.RunNDMAs(1);
-                        }
-                    }
-                    else
-                    {
-                        ARM7.Execute<cpuMode>();
-                    }
-
-                    RunTimers(1);
-                }
-
-                RunSystem(target);
-
-                if (CPUStop & CPUStop_Sleep)
-                {
-                    break;
-                }
-            }
-        }
-
-        if (GPU.TotalScanlines == 0)
-            continue;
-
-#ifdef DEBUG_CHECK_DESYNC
-        Log(LogLevel::Debug, "[%08X%08X] ARM9=%ld, ARM7=%ld, GPU=%ld\n",
-            (u32)(SysTimestamp>>32), (u32)SysTimestamp,
-            (ARM9Timestamp>>1)-SysTimestamp,
-            ARM7Timestamp-SysTimestamp,
-            GPU.GPU3D.Timestamp-SysTimestamp);
-#endif
-        break;
-    }
+NDS::RunResult NDS::FinishFrame()
+{
+    if (!FrameActive)
+        return Running ? RunResult::TargetReached : RunResult::Stopped;
 
     // Ensure the last audio samples produced for this frame are available to the frontend immediately
     SPU.BufferAudio();
@@ -1067,6 +961,400 @@ u32 NDS::RunFrame()
     NumFrames++;
     if (LagFrameFlag)
         NumLagFrames++;
+
+    FrameActive = false;
+    FrameNormalStarted = false;
+
+    return Running ? RunResult::FrameEnded : RunResult::Stopped;
+}
+
+u64 NDS::GetFrameEndTimestamp() const noexcept
+{
+    return FrameActive ? FrameEndTimestamp : SysTimestamp + FrameCycles;
+}
+
+u64 NDS::GetNextEventTimestamp() const noexcept
+{
+    u64 minEvent = UINT64_MAX;
+
+    u32 mask = SchedListMask;
+    for (int i = 0; i < Event_MAX; i++)
+    {
+        if (!mask) break;
+        if (mask & 0x1)
+        {
+            if (SchedList[i].Timestamp < minEvent)
+                minEvent = SchedList[i].Timestamp;
+        }
+
+        mask >>= 1;
+    }
+
+    return minEvent;
+}
+
+void NDS::RunSystemBefore(u64 timestamp, u64 actual)
+{
+    SysTimestamp = actual;
+
+    u32 mask = SchedListMask;
+    for (int i = 0; i < Event_MAX; i++)
+    {
+        if (!mask) break;
+        if (mask & 0x1)
+        {
+            SchedEvent& evt = SchedList[i];
+
+            if (evt.Timestamp < timestamp && evt.Timestamp <= SysTimestamp)
+            {
+                SchedListMask &= ~(1<<i);
+
+                EventFunc func = evt.Funcs[evt.FuncID];
+                func(evt.That, evt.Param);
+            }
+        }
+
+        mask >>= 1;
+    }
+}
+
+void NDS::RunSystemSleepBefore(u64 timestamp)
+{
+    u64 offset = timestamp - SysTimestamp;
+    SysTimestamp = timestamp;
+
+    u32 mask = SchedListMask;
+    for (int i = 0; i < Event_MAX; i++)
+    {
+        if (!mask) break;
+        if (i == Event_RTC)
+        {
+            if (mask & 0x1)
+            {
+                SchedEvent& evt = SchedList[i];
+
+                if (evt.Timestamp < SysTimestamp)
+                {
+                    SchedListMask &= ~(1<<i);
+
+                    EventFunc func = evt.Funcs[evt.FuncID];
+                    func(evt.That, evt.Param);
+                }
+            }
+        }
+        else if (mask & 0x1)
+        {
+            if (SchedList[i].Timestamp <= SysTimestamp)
+            {
+                SchedList[i].Timestamp += offset;
+            }
+        }
+
+        mask >>= 1;
+    }
+}
+
+template <CPUExecuteMode cpuMode>
+NDS::RunResult NDS::RunUntilInternal(u64 target, bool processDueAtTarget)
+{
+    Current = this;
+
+    if (!Running)
+    {
+        if (FrameActive)
+            return FinishFrame();
+        return RunResult::Stopped;
+    }
+
+    if (target <= SysTimestamp)
+    {
+        if (!FrameActive)
+            return RunResult::TargetReached;
+
+        if (CPUStop & CPUStop_Sleep)
+        {
+            if (processDueAtTarget)
+                RunSystemSleep(SysTimestamp);
+
+            if (!Running)
+                return FinishFrame();
+
+            if (SysTimestamp >= FrameEndTimestamp)
+            {
+                if (!processDueAtTarget)
+                    return RunResult::TargetReached;
+
+                GPU.BlankFrame();
+                return FinishFrame();
+            }
+        }
+        else if (processDueAtTarget)
+        {
+            RunSystem(SysTimestamp);
+
+            if (!Running)
+                return FinishFrame();
+            if (GPU.TotalScanlines != 0)
+                return FinishFrame();
+        }
+
+        return RunResult::TargetReached;
+    }
+
+    if (!FrameActive)
+        BeginFrame();
+
+    bool firstOuter = true;
+
+    while (true)
+    {
+        if (!Running)
+            return FinishFrame();
+
+        u64 frametarget;
+        if (firstOuter)
+        {
+            frametarget = FrameEndTimestamp;
+            firstOuter = false;
+        }
+        else
+        {
+            // The original RunFrame extends the frame target when sleep is
+            // entered or exited mid-frame.  Keep that behavior.
+            frametarget = SysTimestamp + FrameCycles;
+            FrameEndTimestamp = frametarget;
+        }
+
+        if (CPUStop & CPUStop_Sleep)
+        {
+            // we are running in sleep mode
+            // we still need to run the RTC during this mode
+            // we also keep outputting audio, so that frontends using audio sync don't skyrocket to 1000+FPS
+
+            while (Running && (SysTimestamp < frametarget))
+            {
+                u64 next = NextTargetSleep();
+                if (next > frametarget)
+                    next = frametarget;
+                if (next > target)
+                    next = target;
+                if (next < SysTimestamp)
+                    next = SysTimestamp;
+
+                ARM9Timestamp = next << ARM9ClockShift;
+                ARM7Timestamp = next;
+                TimerTimestamp[0] = next;
+                TimerTimestamp[1] = next;
+                GPU.GPU3D.Timestamp = next;
+
+                if (next == target && !processDueAtTarget)
+                    RunSystemSleepBefore(target);
+                else
+                    RunSystemSleep(next);
+
+                if (!Running)
+                    return FinishFrame();
+
+                if (!(CPUStop & CPUStop_Sleep))
+                {
+                    FrameNormalStarted = false;
+                    break;
+                }
+
+                if (SysTimestamp >= target)
+                {
+                    if (SysTimestamp >= frametarget)
+                    {
+                        if (!processDueAtTarget && target == frametarget)
+                            return RunResult::TargetReached;
+
+                        GPU.BlankFrame();
+                        return FinishFrame();
+                    }
+
+                    return RunResult::TargetReached;
+                }
+            }
+
+            if (!Running)
+                return FinishFrame();
+
+            if (SysTimestamp >= frametarget)
+            {
+                if (!processDueAtTarget && target == frametarget)
+                    return RunResult::TargetReached;
+
+                GPU.BlankFrame();
+                return FinishFrame();
+            }
+
+            if (SysTimestamp >= target)
+                return RunResult::TargetReached;
+
+            continue;
+        }
+
+        if (cpuMode == CPUExecuteMode::InterpreterGDB)
+        {
+            ARM9.CheckGdbIncoming();
+            ARM7.CheckGdbIncoming();
+        }
+
+        if (!(CPUStop & CPUStop_Wakeup))
+        {
+            if (!FrameNormalStarted)
+            {
+                GPU.StartFrame();
+                FrameNormalStarted = true;
+            }
+        }
+        CPUStop &= ~CPUStop_Wakeup;
+
+        while (Running && GPU.TotalScanlines==0)
+        {
+            u64 next = NextTarget();
+            if (next > target)
+                next = target;
+            if (next < SysTimestamp)
+                next = SysTimestamp;
+
+            ARM9Target = next << ARM9ClockShift;
+            CurCPU = 0;
+
+            if (CPUStop & CPUStop_GXStall)
+            {
+                // GXFIFO stall
+                s32 cycles = GPU.GPU3D.CyclesToRunFor();
+
+                ARM9Timestamp = std::min(ARM9Target, ARM9Timestamp+(cycles<<ARM9ClockShift));
+            }
+            else if (CPUStop & CPUStop_DMA9)
+            {
+                DMAs[0].Run();
+                if (!(CPUStop & CPUStop_GXStall)) DMAs[1].Run();
+                if (!(CPUStop & CPUStop_GXStall)) DMAs[2].Run();
+                if (!(CPUStop & CPUStop_GXStall)) DMAs[3].Run();
+                if (ConsoleType == 1)
+                {
+                    auto& dsi = dynamic_cast<melonDS::DSi&>(*this);
+                    dsi.RunNDMAs(0);
+                }
+            }
+            else
+            {
+                ARM9.Execute<cpuMode>();
+            }
+
+            RunTimers(0);
+            GPU.GPU3D.Run();
+
+            u64 actual = ARM9Timestamp >> ARM9ClockShift;
+            CurCPU = 1;
+
+            while (ARM7Timestamp < actual)
+            {
+                ARM7Target = actual; // might be changed by a reschedule
+
+                if (CPUStop & CPUStop_DMA7)
+                {
+                    DMAs[4].Run();
+                    DMAs[5].Run();
+                    DMAs[6].Run();
+                    DMAs[7].Run();
+                    if (ConsoleType == 1)
+                    {
+                        auto& dsi = dynamic_cast<melonDS::DSi&>(*this);
+                        dsi.RunNDMAs(1);
+                    }
+                }
+                else
+                {
+                    ARM7.Execute<cpuMode>();
+                }
+
+                RunTimers(1);
+            }
+
+            if (!Running)
+                return FinishFrame();
+
+            if (next == target && !processDueAtTarget)
+                RunSystemBefore(target, actual);
+            else
+                RunSystem(actual);
+
+            if (!Running)
+                return FinishFrame();
+
+            if (GPU.TotalScanlines != 0)
+                return FinishFrame();
+
+            if (SysTimestamp >= target)
+                return RunResult::TargetReached;
+
+            if (CPUStop & CPUStop_Sleep)
+            {
+                FrameNormalStarted = false;
+                break;
+            }
+        }
+
+        if (!Running)
+            return FinishFrame();
+
+        if (GPU.TotalScanlines != 0)
+            return FinishFrame();
+
+        if (CPUStop & CPUStop_Sleep)
+        {
+            FrameNormalStarted = false;
+            continue;
+        }
+
+#ifdef DEBUG_CHECK_DESYNC
+        Log(LogLevel::Debug, "[%08X%08X] ARM9=%ld, ARM7=%ld, GPU=%ld\n",
+            (u32)(SysTimestamp>>32), (u32)SysTimestamp,
+            (ARM9Timestamp>>1)-SysTimestamp,
+            ARM7Timestamp-SysTimestamp,
+            GPU.GPU3D.Timestamp-SysTimestamp);
+#endif
+    }
+}
+
+NDS::RunResult NDS::RunUntilDispatch(u64 target, bool processDueAtTarget)
+{
+#ifdef JIT_ENABLED
+    if (EnableJIT)
+        return RunUntilInternal<CPUExecuteMode::JIT>(target, processDueAtTarget);
+    else
+#endif
+#ifdef GDBSTUB_ENABLED
+    if (EnableGDBStub)
+        return RunUntilInternal<CPUExecuteMode::InterpreterGDB>(target, processDueAtTarget);
+    else
+#endif
+        return RunUntilInternal<CPUExecuteMode::Interpreter>(target, processDueAtTarget);
+}
+
+NDS::RunResult NDS::RunUntil(u64 target)
+{
+    return RunUntilDispatch(target, true);
+}
+
+NDS::RunResult NDS::RunUntilBefore(u64 target)
+{
+    return RunUntilDispatch(target, false);
+}
+
+template <CPUExecuteMode cpuMode>
+u32 NDS::RunFrame()
+{
+    BeginFrame();
+
+    // UINT64_MAX means "run to the frame boundary": the original RunFrame
+    // did not cap the normal execution loop at the initial frame target,
+    // which matters when sleep mode extends the frame.
+    RunUntilInternal<cpuMode>(UINT64_MAX, true);
 
     if (Running)
         return GPU.TotalScanlines;

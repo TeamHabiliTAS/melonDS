@@ -260,7 +260,7 @@ public: // TODO: Encapsulate the rest of these members
     void* UserData;
 
     int ConsoleType;
-    int CurCPU;
+    int CurCPU = 0;
 
     SchedEvent SchedList[Event_MAX] {};
     u8 ARM9MemTimings[0x40000][8];
@@ -268,9 +268,9 @@ public: // TODO: Encapsulate the rest of these members
     u8 ARM7MemTimings[0x20000][4];
     u32 ARM7Regions[0x20000];
 
-    u32 NumFrames;
-    u32 NumLagFrames;
-    bool LagFrameFlag;
+    u32 NumFrames = 0;
+    u32 NumLagFrames = 0;
+    bool LagFrameFlag = false;
 
     // no need to worry about those overflowing, they can keep going for atleast 4350 years
     u64 ARM9Timestamp, ARM9Target;
@@ -412,7 +412,39 @@ public: // TODO: Encapsulate the rest of these members
 
     std::unique_ptr<GBACart::CartCommon> EjectGBACart() { return GBACartSlot.EjectCart(); }
 
+    enum class RunResult
+    {
+        TargetReached,
+        FrameEnded,
+        Stopped
+    };
+
+    static constexpr u64 FrameCycles = 560190;
+
     u32 RunFrame();
+
+    /// Run until target, a frame boundary, or a stop.  Events with a
+    /// timestamp <= the reached time are processed.
+    RunResult RunUntil(u64 target);
+
+    /// Run up to target without processing events scheduled exactly at
+    /// target.  The scheduler uses this to deliver cross-instance data
+    /// before target-time events are handled.
+    RunResult RunUntilBefore(u64 target);
+
+    u64 GetSysTimestamp() const noexcept { return SysTimestamp; }
+    u64 GetFrameEndTimestamp() const noexcept;
+    u64 GetNextEventTimestamp() const noexcept;
+    bool IsFrameActive() const noexcept { return FrameActive; }
+
+    /* Marks a loaded state as a frame boundary.  MI only saves at frame
+       boundaries, and GPU.TotalScanlines == 0 is ambiguous at frame 0. */
+    void ResetTransientFrameState() noexcept
+    {
+        FrameActive = false;
+        FrameNormalStarted = false;
+        FrameEndTimestamp = SysTimestamp + FrameCycles;
+    }
 
     bool IsRunning() const noexcept { return Running; }
 
@@ -531,16 +563,26 @@ protected:
     alignas(u64) u32 SqrtVal[2];
     u32 SqrtRes;
     u16 KeyCnt[2];
-    bool Running;
-    bool RunningGame;
-    u64 LastSysClockCycles;
-    u64 FrameStartTimestamp;
+    bool Running = false;
+    bool RunningGame = false;
+    u64 LastSysClockCycles = 0;
+    u64 FrameStartTimestamp = 0;
+    u64 FrameEndTimestamp = 0;
+    bool FrameActive = false;
+    bool FrameNormalStarted = false;
+    void BeginFrame();
+    RunResult FinishFrame();
+    RunResult RunUntilDispatch(u64 target, bool processDueAtTarget);
+    template <CPUExecuteMode cpuMode>
+    RunResult RunUntilInternal(u64 target, bool processDueAtTarget);
     u64 NextTarget();
     u64 NextTargetSleep();
     void CheckKeyIRQ(u32 cpu, u32 oldkey, u32 newkey);
     void Reschedule(u64 target);
     void RunSystemSleep(u64 timestamp);
+    void RunSystemSleepBefore(u64 target);
     void RunSystem(u64 timestamp);
+    void RunSystemBefore(u64 target, u64 actual);
     void HandleTimerOverflow(u32 tid);
     u16 TimerGetCounter(u32 timer);
     void TimerStart(u32 id, u16 cnt);
