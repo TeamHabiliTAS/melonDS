@@ -242,6 +242,12 @@ void NDSCartSlot::DoSavestate(Savestate* file) noexcept
     file->Var64(&Key2_X);
     file->Var64(&Key2_Y);
 
+    /* KEY1 command decryption depends on the current key buffer.  It is
+       initialized by command 0x3C, but an encrypted session can span a
+       savestate boundary, so preserve the buffer itself. */
+    if (file->IsAtLeastVersion(14, 4))
+        file->VarArray(Key1_KeyBuf.data(), sizeof(Key1_KeyBuf));
+
     file->Var8(&CPUSelect);
     file->Var8(&PowerState);
     file->VarBool(&CartActive);

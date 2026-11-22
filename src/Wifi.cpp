@@ -224,6 +224,7 @@ void Wifi::Reset()
     MPReplyTimer = 0;
     MPClientMask = 0;
     MPClientFail = 0;
+    MPCmdTimestamp = 0;
     memset(MPClientReplies, 0, sizeof(MPClientReplies));
 
     MPLastSeqno = 0xFFFF;
@@ -313,6 +314,16 @@ void Wifi::DoSavestate(Savestate* file)
     file->Bool32(&IsMPClient);
     file->Var64(&NextSync);
     file->Var64(&RXTimestamp);
+
+    if (file->IsAtLeastVersion(14, 1))
+        file->Var64(&MPCmdTimestamp);
+    else
+        MPCmdTimestamp = 0;
+
+    if (file->IsAtLeastVersion(14, 2))
+        WifiAP->DoSavestate(file);
+    else
+        WifiAP->Reset();
 }
 
 
@@ -614,7 +625,7 @@ void Wifi::TXSendFrame(const TXSlot* slot, int num)
     }
     else
     {
-        if (num == 1) noseqno = (IOPORT(W_TXSlotCmd) & 0x4000) ? 1:0;
+        if (num == 1) noseqno = (IOPORT(W_TXSlotCmd) & 0x2000) ? 1:0;
     }
 
     if (!noseqno)
@@ -656,23 +667,23 @@ void Wifi::TXSendFrame(const TXSlot* slot, int num)
     case 0:
     case 2:
     case 3:
-        Platform::MP_SendPacket(TXBuffer, 12+len, USTimestamp, NDS.UserData);
+        Platform::MP_SendPacket(TXBuffer, 12+len, USTimestamp, PreambleLen(slot->Rate), NDS.UserData);
         if (!IsMP) WifiAP->SendPacket(TXBuffer, 12+len);
         break;
 
     case 1:
         *(u16*)&TXBuffer[12 + 24+2] = MPClientMask;
-        Platform::MP_SendCmd(TXBuffer, 12+len, USTimestamp, NDS.UserData);
+        Platform::MP_SendCmd(TXBuffer, 12+len, USTimestamp, PreambleLen(slot->Rate), NDS.UserData);
         break;
 
     case 5:
         IncrementTXCount(slot);
-        Platform::MP_SendReply(TXBuffer, 12+len, USTimestamp, IOPORT(W_AIDLow), NDS.UserData);
+        Platform::MP_SendReply(TXBuffer, 12+len, USTimestamp, IOPORT(W_AIDLow), PreambleLen(slot->Rate), NDS.UserData);
         break;
 
     case 4:
         *(u64*)&TXBuffer[0xC + 24] = USCounter;
-        Platform::MP_SendPacket(TXBuffer, 12+len, USTimestamp, NDS.UserData);
+        Platform::MP_SendPacket(TXBuffer, 12+len, USTimestamp, PreambleLen(slot->Rate), NDS.UserData);
         break;
     }
 }
@@ -801,7 +812,7 @@ void Wifi::FireTX()
 
 void Wifi::SendMPDefaultReply()
 {
-    u8 reply[12 + 28];
+    u8 reply[12 + 28] = {};
 
     *(u16*)&reply[0xA] = 28; // length
 
@@ -828,7 +839,7 @@ void Wifi::SendMPDefaultReply()
     *(u16*)&reply[0xC + 0x16] = IOPORT(W_TXSeqNo) << 4;
     *(u32*)&reply[0xC + 0x18] = 0;
 
-    int txlen = Platform::MP_SendReply(reply, 12+28, USTimestamp, IOPORT(W_AIDLow), NDS.UserData);
+    int txlen = Platform::MP_SendReply(reply, 12+28, USTimestamp, IOPORT(W_AIDLow), PreambleLen(2), NDS.UserData);
     WIFI_LOG("wifi: sent %d/40 bytes of MP default reply\n", txlen);
 }
 
@@ -895,7 +906,7 @@ void Wifi::SendMPReply(u16 clienttime, u16 clientmask)
 
 void Wifi::SendMPAck(u16 cmdcount, u16 clientfail)
 {
-    u8 ack[12 + 32];
+    u8 ack[12 + 32] = {};
 
     *(u16*)&ack[0xA] = 32; // length
 
@@ -938,7 +949,7 @@ void Wifi::SendMPAck(u16 cmdcount, u16 clientfail)
         *(u32*)&ack[0] = PreambleLen(TXSlots[1].Rate);
     }
 
-    int txlen = Platform::MP_SendAck(ack, 12+32, USTimestamp, NDS.UserData);
+    int txlen = Platform::MP_SendAck(ack, 12+32, USTimestamp, PreambleLen(TXSlots[1].Rate), NDS.UserData);
     WIFI_LOG("wifi: sent %d/44 bytes of MP ack, %d %d\n", txlen, ComStatus, RXTime);
 }
 
@@ -955,7 +966,26 @@ bool Wifi::ProcessTX(TXSlot* slot, int num)
         else if (slot->CurPhase == 2)
         {
             MPReplyTimer -= kTimerInterval;
-            if (MPReplyTimer <= 0 && MPClientMask != 0)
+
+            /*
+                Non-blocking reply collection.  The command timestamp is
+                fixed at the CMD send time; using the current USTimestamp
+                here would make normal replies look stale as the window
+                advances.
+            */
+            bool first_replied = false;
+            if (MPClientMask != 0)
+            {
+                const u16 replies = Platform::MP_RecvReplies(MPClientReplies, MPCmdTimestamp,
+                                                             MPClientMask, NDS.UserData);
+                MPClientFail &= ~replies;
+
+                int nclient = 1;
+                while (!(MPClientMask & (1 << nclient))) nclient++;
+                first_replied = (MPClientFail & (1 << nclient)) == 0;
+            }
+
+            if ((MPReplyTimer <= 0 || first_replied) && MPClientMask != 0)
             {
                 int nclient = 1;
                 while (!(MPClientMask & (1 << nclient))) nclient++;
@@ -1057,17 +1087,20 @@ bool Wifi::ProcessTX(TXSlot* slot, int num)
                 }
                 SetStatus(5);
 
-                MPReplyTimer = 16 + PreambleLen(slot->Rate);
-
-                u16 res = 0;
-                if (MPClientMask)
-                    res = Platform::MP_RecvReplies(MPClientReplies, USTimestamp, MPClientMask, NDS.UserData);
-                MPClientFail &= ~res;
-
                 // TODO: 112 likely includes the ack preamble, which needs adjusted
                 // for long-preamble settings
                 slot->CurPhase = 2;
                 slot->CurPhaseTime = 112 + ((10 + IOPORT(W_CmdReplyTime)) * NumClients(MPClientMask));
+
+                /*
+                    GBATEK, DS Wifi Multiplay Master: the hardware waits
+                    16 + ((10 + W_CMD_REPLYTIME) * num_clients) for replies
+                    before sending the CMD ACK.  The old 16 + preamble timer
+                    cut that documented window short and marked clients as
+                    failed before their reply could arrive.
+                */
+                MPReplyTimer = 16 + 10 + IOPORT(W_CmdReplyTime);
+                MPCmdTimestamp = USTimestamp;
 
                 break;
             }
@@ -1500,7 +1533,7 @@ void Wifi::FinishRX()
             // in the case this client wasn't ready to send a reply
             // TODO: also send this if we have RX disabled
 
-            Platform::MP_SendReply(nullptr, 0, USTimestamp, 0, NDS.UserData);
+            Platform::MP_SendReply(nullptr, 0, USTimestamp, 0, PreambleLen(2), NDS.UserData);
         }
     }
     else if ((rxflags & 0x800F) == 0x8001)
@@ -1768,11 +1801,14 @@ void Wifi::USTimer(u32 param)
             StartRX();
         }
 
-        if (USTimestamp >= NextSync)
-        {
-            // TODO: not do this every tick if it fails to receive a frame!
+        /*
+            CMD/ACK frames are handled by the MP hardware.  The ACK's
+            runahead is a software sleep hint, not a hardware receive gate.
+            Poll the MP host receive path while the client is idle; regular
+            frames remain paced by NextSync.
+        */
+        if ((!ComStatus) && RXTimestamp == 0)
             CheckRX(2);
-        }
     }
 
     if (!(USTimestamp & 0x3FF & kTimeCheckMask))
@@ -2168,6 +2204,7 @@ void Wifi::Write(u32 addr, u16 val)
                 IOPORT(0x02E) = 0;
                 IOPORT(W_RXBufBegin) = 0x4000;
                 IOPORT(W_RXBufEnd) = 0x4800;
+                Platform::MP_SetRxBufferSize(0x800, NDS.UserData);
                 IOPORT(W_TXBeaconTIM) = 0;
                 IOPORT(W_Preamble) = 0x0001;
                 IOPORT(W_RXFilter) = 0x0401;
@@ -2351,6 +2388,19 @@ void Wifi::Write(u32 addr, u16 val)
             IOPORT(W_RXBufCount)--;
             if (IOPORT(W_RXBufCount) == 0)
                 SetIRQ(9);
+        }
+        return;
+
+    case W_RXBufBegin:
+    case W_RXBufEnd:
+        IOPORT(addr & 0xFFF) = val;
+        {
+            u32 begin = IOPORT(W_RXBufBegin) & 0x1FFE;
+            u32 end = IOPORT(W_RXBufEnd) & 0x1FFE;
+            u32 size = (end >= begin) ? (end - begin) : (end + 0x2000 - begin);
+            if (size == 0)
+                size = 0x800;
+            Platform::MP_SetRxBufferSize(size, NDS.UserData);
         }
         return;
 

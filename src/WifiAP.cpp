@@ -91,7 +91,23 @@ void WifiAP::Reset()
     PacketLen = 0;
     RXNum = 0;
 
+    memset(LANBuffer, 0, sizeof(LANBuffer));
+
     ClientStatus = 0;
+}
+
+void WifiAP::DoSavestate(Savestate* file)
+{
+    file->Section("WIFP");
+
+    file->Var64(&USCounter);
+    file->Var16(&SeqNo);
+    file->Bool32(&BeaconDue);
+    file->VarArray(PacketBuffer, sizeof(PacketBuffer));
+    file->Var32((u32*)&PacketLen);
+    file->Var32((u32*)&RXNum);
+    file->VarArray(LANBuffer, sizeof(LANBuffer));
+    file->Var32((u32*)&ClientStatus);
 }
 
 

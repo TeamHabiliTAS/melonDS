@@ -24,6 +24,7 @@
 namespace melonDS
 {
 class Wifi;
+class Savestate;
 
 class WifiAP
 {
@@ -31,6 +32,7 @@ public:
     WifiAP(Wifi* client, void* userdata);
     ~WifiAP();
     void Reset();
+    void DoSavestate(Savestate* file);
 
     static const char* APName;
     static const u8 APMac[6];

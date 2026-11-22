@@ -469,8 +469,15 @@ void MP_End(void* userdata)
     MPInterface::Get().End(inst);
 }
 
-int MP_SendPacket(u8* data, int len, u64 timestamp, void* userdata)
+void MP_SetRxBufferSize(u32 bytes, void* userdata)
 {
+    (void)bytes;
+    (void)userdata;
+}
+
+int MP_SendPacket(u8* data, int len, u64 timestamp, u32 preamble_us, void* userdata)
+{
+    (void)preamble_us;
     int inst = ((EmuInstance*)userdata)->getInstanceID();
     return MPInterface::Get().SendPacket(inst, data, len, timestamp);
 }
@@ -481,20 +488,23 @@ int MP_RecvPacket(u8* data, u64* timestamp, void* userdata)
     return MPInterface::Get().RecvPacket(inst, data, timestamp);
 }
 
-int MP_SendCmd(u8* data, int len, u64 timestamp, void* userdata)
+int MP_SendCmd(u8* data, int len, u64 timestamp, u32 preamble_us, void* userdata)
 {
+    (void)preamble_us;
     int inst = ((EmuInstance*)userdata)->getInstanceID();
     return MPInterface::Get().SendCmd(inst, data, len, timestamp);
 }
 
-int MP_SendReply(u8* data, int len, u64 timestamp, u16 aid, void* userdata)
+int MP_SendReply(u8* data, int len, u64 timestamp, u16 aid, u32 preamble_us, void* userdata)
 {
+    (void)preamble_us;
     int inst = ((EmuInstance*)userdata)->getInstanceID();
     return MPInterface::Get().SendReply(inst, data, len, timestamp, aid);
 }
 
-int MP_SendAck(u8* data, int len, u64 timestamp, void* userdata)
+int MP_SendAck(u8* data, int len, u64 timestamp, u32 preamble_us, void* userdata)
 {
+    (void)preamble_us;
     int inst = ((EmuInstance*)userdata)->getInstanceID();
     return MPInterface::Get().SendAck(inst, data, len, timestamp);
 }

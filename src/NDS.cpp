@@ -295,7 +295,7 @@ void NDS::SetupDirectBoot()
     const NDSHeader& header = NDSCartSlot.GetCart()->GetHeader();
     u32 cartid = NDSCartSlot.GetCart()->ID();
     const u8* cartrom = NDSCartSlot.GetCart()->GetROM();
-    MapSharedWRAM(3);
+    MapSharedWRAM(3, true);
 
     // Copy the Nintendo logo from the NDS ROM header to the ARM9 BIOS if using FreeBIOS
     // Games need this for DS<->GBA comm to work
@@ -483,7 +483,7 @@ void NDS::Reset()
     memset(SharedWRAM, 0, 0x8000);
     memset(ARM7WRAM, 0, 0x10000);
 
-    MapSharedWRAM(0);
+    MapSharedWRAM(0, true);
 
     // TODO FIX THOSE VALUES
     // TODO figure out what they should be
@@ -691,6 +691,18 @@ bool NDS::DoSavestate(Savestate* file)
     file->Var16(&DivCnt);
     file->Var16(&SqrtCnt);
 
+    /* The divider/square-root result registers are CPU-readable and may be
+       polled after the operation completes.  Preserve them across states. */
+    if (file->IsAtLeastVersion(14, 5))
+    {
+        file->VarArray(DivNumerator, sizeof(DivNumerator));
+        file->VarArray(DivDenominator, sizeof(DivDenominator));
+        file->VarArray(DivQuotient, sizeof(DivQuotient));
+        file->VarArray(DivRemainder, sizeof(DivRemainder));
+        file->VarArray(SqrtVal, sizeof(SqrtVal));
+        file->Var32(&SqrtRes);
+    }
+
     file->Var32(&CPUStop);
 
     for (int i = 0; i < 8; i++)
@@ -739,7 +751,9 @@ bool NDS::DoSavestate(Savestate* file)
     {
         // 'dept of redundancy dept'
         // but we do need to update the mappings
-        MapSharedWRAM(WRAMCnt);
+        // force it: WRAMCnt was just loaded, so the early-out would leave the
+        // pre-load (boot menu) mapping in place in a fresh session.
+        MapSharedWRAM(WRAMCnt, true);
 
         InitTimings();
         SetGBASlotTimings();
@@ -991,6 +1005,14 @@ u64 NDS::GetNextEventTimestamp() const noexcept
     }
 
     return minEvent;
+}
+
+u64 NDS::GetEventTimestamp(u32 id) const noexcept
+{
+    if (id >= Event_MAX || !(SchedListMask & (1u << id)))
+        return UINT64_MAX;
+
+    return SchedList[id].Timestamp;
 }
 
 void NDS::RunSystemBefore(u64 timestamp, u64 actual)
@@ -1579,9 +1601,9 @@ void NDS::SetExMemCnt(u32 cpu, u16 val, u16 mask)
 }
 
 
-void NDS::MapSharedWRAM(u8 val)
+void NDS::MapSharedWRAM(u8 val, bool force)
 {
-    if (val == WRAMCnt)
+    if (!force && val == WRAMCnt)
         return;
 
     JIT.Memory.RemapSWRAM();

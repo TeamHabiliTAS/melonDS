@@ -435,6 +435,10 @@ public: // TODO: Encapsulate the rest of these members
     u64 GetSysTimestamp() const noexcept { return SysTimestamp; }
     u64 GetFrameEndTimestamp() const noexcept;
     u64 GetNextEventTimestamp() const noexcept;
+
+    /// Returns the timestamp of a scheduled event, or UINT64_MAX when the
+    /// event is not scheduled.  Used by the session scheduler for MP stops.
+    u64 GetEventTimestamp(u32 id) const noexcept;
     bool IsFrameActive() const noexcept { return FrameActive; }
 
     /* Marks a loaded state as a frame boundary.  MI only saves at frame
@@ -465,7 +469,7 @@ public: // TODO: Encapsulate the rest of these members
 
     void Halt();
 
-    void MapSharedWRAM(u8 val);
+    void MapSharedWRAM(u8 val, bool force = false);
 
     void UpdateIRQ(u32 cpu);
     void SetIRQ(u32 cpu, u32 irq);

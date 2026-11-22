@@ -173,6 +173,18 @@ public:
     const u8* GetMAC() const;
     const u8* GetBSSID() const;
 
+    /* Read-only state used by the MI scheduler and diagnostics. */
+    u64 GetUSTimestamp() const noexcept { return USTimestamp; }
+    bool IsMPMode() const noexcept { return IsMP; }
+    bool IsMPClientMode() const noexcept { return IsMPClient; }
+    u64 GetNextSync() const noexcept { return NextSync; }
+    u64 GetRXTimestamp() const noexcept { return RXTimestamp; }
+    u16 GetMPClientMask() const noexcept { return MPClientMask; }
+    u16 GetMPClientFail() const noexcept { return MPClientFail; }
+    int GetMPReplyTimer() const noexcept { return MPReplyTimer; }
+    u64 GetMPCmdTimestamp() const noexcept { return MPCmdTimestamp; }
+    bool IsPoweredOn() const noexcept { return PowerOn; }
+
 private:
     melonDS::NDS& NDS;
     u8 RAM[0x2000];
@@ -236,6 +248,7 @@ private:
 
     int MPReplyTimer;
     u16 MPClientMask, MPClientFail;
+    u64 MPCmdTimestamp = 0; // Wi-Fi time of the current CMD, for reply staleness
 
     u8 MPClientReplies[15*1024];
 

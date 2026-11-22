@@ -99,6 +99,11 @@ void ARMv5::CP15DoSavestate(Savestate* file)
         UpdateDTCMSetting();
         UpdateITCMSetting();
         UpdatePURegions(true);
+
+        /* UpdatePURegions rebuilds MemTimings, so recompute the cached
+           region timing after that.  Doing this earlier (in ARM::DoSavestate)
+           leaves a fresh session with the pre-load boot-menu timing. */
+        RegionCodeCycles = MemTimings[R[15] >> 12][0];
     }
 }
 

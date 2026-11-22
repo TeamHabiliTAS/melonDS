@@ -254,7 +254,6 @@ void ARM::DoSavestate(Savestate* file)
         if (!Num)
         {
             SetupCodeMem(R[15]); // should fix it
-            ((ARMv5*)this)->RegionCodeCycles = ((ARMv5*)this)->MemTimings[R[15] >> 12][0];
 
             if ((CPSR & 0x1F) == 0x10)
                 ((ARMv5*)this)->PU_Map = ((ARMv5*)this)->PU_UserMap;
@@ -266,6 +265,18 @@ void ARM::DoSavestate(Savestate* file)
             CodeRegion = R[15] >> 24;
             CodeCycles = R[15] >> 15; // cheato
         }
+    }
+
+    /* The pipeline timing fields are part of the exact CPU state: the
+       instruction already fetched into the pipeline uses CodeCycles, and
+       the next data access may use DataRegion/DataCycles.  Save them so a
+       fresh session resumes with the same timing as a continuous run. */
+    if (file->IsAtLeastVersion(14, 3))
+    {
+        file->Var32((u32*)&CodeRegion);
+        file->Var32((u32*)&CodeCycles);
+        file->Var32((u32*)&DataRegion);
+        file->Var32((u32*)&DataCycles);
     }
 }
 

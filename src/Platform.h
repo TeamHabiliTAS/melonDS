@@ -298,11 +298,12 @@ void WriteDateTime(int year, int month, int day, int hour, int minute, int secon
 // packet type: DS-style TX header (12 bytes) + original 802.11 frame
 void MP_Begin(void* userdata);
 void MP_End(void* userdata);
-int MP_SendPacket(u8* data, int len, u64 timestamp, void* userdata);
+void MP_SetRxBufferSize(u32 bytes, void* userdata);
+int MP_SendPacket(u8* data, int len, u64 timestamp, u32 preamble_us, void* userdata);
 int MP_RecvPacket(u8* data, u64* timestamp, void* userdata);
-int MP_SendCmd(u8* data, int len, u64 timestamp, void* userdata);
-int MP_SendReply(u8* data, int len, u64 timestamp, u16 aid, void* userdata);
-int MP_SendAck(u8* data, int len, u64 timestamp, void* userdata);
+int MP_SendCmd(u8* data, int len, u64 timestamp, u32 preamble_us, void* userdata);
+int MP_SendReply(u8* data, int len, u64 timestamp, u16 aid, u32 preamble_us, void* userdata);
+int MP_SendAck(u8* data, int len, u64 timestamp, u32 preamble_us, void* userdata);
 int MP_RecvHostPacket(u8* data, u64* timestamp, void* userdata);
 u16 MP_RecvReplies(u8* data, u64 timestamp, u16 aidmask, void* userdata);
 
